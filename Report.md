@@ -271,7 +271,6 @@ Mahasiswa Program Studi Sistem Informasi
 STIKOM Bali
 
 - Email: afiqandico13@gmail.com
-- WhatsApp: 08990308936
 - GitHub: [@afiqandico13](https://github.com/afiqandico13)
 
 Saya terbuka untuk diskusi lebih lanjut atau klarifikasi tentang temuan ini.
