@@ -1,51 +1,48 @@
 ---
-title: "UNUD Web Security Review - Quick Static Analysis"
+title: "Universitas Udayana (UNUD) - Web Security Review"
 date: 2026-06-18
 target: https://www.unud.ac.id/
-reviewer: "Afiq Andico (static analysis only)"
-method: "Passive recon: HTTP headers, HTML inspection, public endpoint probing. NO active testing, NO login attempts, NO payload submission."
-scope: "Public surface only (homepage, common WP endpoints)"
-status: "quick review, not exhaustive"
+reviewer: "Afiq Andico, Mahasiswa Sistem Informasi, STIKOM Bali"
+method: "Static analysis only: HTTP headers, HTML inspection, public endpoint probing. No active testing, no login attempts, no payload submission."
+scope: "Public surface only (homepage, common WordPress endpoints)"
 ---
 
-# Universitas Udayana (UNUD) — Web Security Review (Quick)
+# Universitas Udayana (UNUD) — Web Security Review
 
-> ⚠️ **Quick static review**, not exhaustive. For a full audit, IT team should run extended testing internally.
+**Tanggal**: 18 Juni 2026  
+**Reviewer**: Afiq Andico, mahasiswa Program Studi Sistem Informasi, STIKOM Bali  
+**Target**: https://www.unud.ac.id/  
+**Metode**: Static analysis saja — HTTP header inspection, HTML/JS source reading, public endpoint probing  
+**Cakupan**: Public surface only (homepage, common WordPress endpoints). Area authenticated tidak termasuk scope.
 
-## Target
+---
 
-- **URL**: https://www.unud.ac.id/
-- **CMS**: WordPress 6.9 (latest as of early 2025)
-- **Web server**: nginx/1.28.0 on Ubuntu
-- **Theme**: unud-theme-2026 (custom)
-- **JS framework**: Alpine.js
+## Ringkasan Eksekutif
 
-## Quick Summary
-
-UNUD punya fondasi yang lumayan (WordPress versi terbaru, X-Frame-Options, X-Content-Type-Options, Referrer-Policy) — **tapi ada gap signifikan** di defense in depth dan information disclosure.
+UNUD website berjalan di **WordPress 6.9** (versi terbaru) di nginx/Ubuntu. Fondasi keamanan sudah ada (X-Frame-Options, X-Content-Type-Options, Referrer-Policy) — **tapi ada gap signifikan** di defense in depth dan information disclosure yang perlu diperbaiki.
 
 | Severity | Count | Items |
 |---|---|---|
+| 🟠 Notable | 1 | **Username enumeration via wp-json** (5 username exposed, termasuk admin) |
 | 🟡 Medium | 4 | Missing HSTS, CSP, Permissions-Policy; server version exposed |
 | 🟢 Low | 1 | WordPress version disclosure (readme.html) |
-| 🟠 Notable | 1 | **Username enumeration via wp-json** (real, not theoretical) |
 
-**Tidak ada exploit path yang aku verify** — semua temuan dari static analysis.
+**Tidak ada exploit path yang verified dari public surface.** Semua temuan dari static analysis. Tujuan: bahan evaluasi internal UNUD IT.
 
 ---
 
-## 1. Tech Stack Detected
+## 1. Tech Stack Terdeteksi
 
 ```
-WordPress 6.9 (latest)
-nginx 1.28.0 on Ubuntu
-PHP (version not exposed in headers)
+WordPress 6.9 (rilis akhir 2024, versi terbaru)
+nginx 1.28.0 di Ubuntu
+PHP (versi tidak exposed di headers)
 Custom theme: unud-theme-2026
-JS: Alpine.js, custom app-VLjvoJQu.js, iconify.min.js, aos.js
+JS: Alpine.js, custom app-*.js, iconify.min.js, aos.js
 CSS: Inter, aos.css, all.min.css (FontAwesome)
 ```
 
-**WordPress 6.9 = versi terbaru** (rilis akhir 2024). Bagus — mereka update secara berkala.
+**WordPress 6.9 = versi terbaru** — UNUD update secara berkala, ini positif.
 
 ---
 
@@ -66,17 +63,17 @@ curl -sI https://www.unud.ac.id/ | grep -iE "x-frame|x-content|referrer|strict-t
 | `Strict-Transport-Security` | ❌ **MISSING** | HTTPS-only enforcement tidak ada |
 | `Content-Security-Policy` | ❌ **MISSING** | No XSS defense in depth |
 | `Permissions-Policy` | ❌ **MISSING** | Modern API restrictions |
-| `X-XSS-Protection` | ❌ Not present (deprecated, OK to skip) | Browser modern ignore |
+| `X-XSS-Protection` | ❌ Not present | Deprecated, browser modern ignore |
 
 **Catatan penting**:
 - Untuk situs sebesar UNUD dengan traffic tinggi, **HSTS wajib** — tanpa HSTS, attacker bisa downgrade attack ke HTTP.
-- **CSP critical** — WordPress sites dengan banyak plugin rentan XSS tanpa CSP defense.
+- **CSP critical** — WordPress sites dengan banyak plugin rentan XSS tanpa CSP defense in depth.
 
 ---
 
 ## 3. 🟠 TEMUAN: WordPress User Enumeration via REST API
 
-**Severity**: Low–Medium (4.0)
+**Severity**: Low–Medium (4.0)  
 **Tipe**: Information Disclosure
 
 **Bukti reproduksi**:
@@ -85,6 +82,7 @@ curl -s https://www.unud.ac.id/wp-json/wp/v2/users
 ```
 
 **Hasil** (5 user accounts exposed):
+
 | Display Name | Slug (username) |
 |---|---|
 | Admin Web Universitas Udayana | `admin_unud` |
@@ -94,13 +92,13 @@ curl -s https://www.unud.ac.id/wp-json/wp/v2/users
 | suwija_putra | `putrasuwija` |
 
 **Catatan**:
-- Akun `admin_unud` kemungkinan besar adalah administrator web — **target utama** untuk password spraying
-- WordPress secara default meng-expose user enumeration via REST API sejak versi 4.7
-- Bisa dikombinasi dengan targeted phishing ("dari admin UNUD")
+- Akun `admin_unud` kemungkinan besar adalah administrator web — target utama untuk targeted attack.
+- WordPress secara default meng-expose user enumeration via REST API sejak versi 4.7.
+- Bisa dikombinasikan dengan targeted phishing ("dari admin UNUD").
 
-**Fix** (di wp-config.php atau via plugin):
+**Fix** (di `functions.php` theme, atau via plugin):
 ```php
-// Opsi 1: Disable REST API for unauthenticated users (add to functions.php)
+// Opsi 1: Disable REST API for unauthenticated users
 add_filter('rest_endpoints', function($endpoints) {
     if (!is_user_logged_in()) {
         if (isset($endpoints['/wp/v2/users'])) {
@@ -115,18 +113,16 @@ add_filter('rest_endpoints', function($endpoints) {
 
 // Opsi 2: Via plugin (lebih mudah)
 // Install: "Disable WP REST API" atau "WP Hide REST API"
-// Opsi 3: Require authentication for /users endpoint
-// (edit .htaccess atau nginx config untuk require auth)
 ```
 
 ---
 
 ## 4. 🟡 TEMUAN: Security Headers Hilang (HSTS, CSP, Permissions-Policy)
 
-**Severity**: Medium (5.0)
+**Severity**: Medium (5.0)  
 **Lokasi**: Semua halaman UNUD (global, di level nginx/Apache)
 
-**Header yang HILANG** (sama seperti SION review):
+**Header yang HILANG**:
 
 | Header | Rekomendasi |
 |---|---|
@@ -142,7 +138,7 @@ add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsaf
 add_header Permissions-Policy "geolocation=(), camera=(), microphone=()" always;
 ```
 
-**Catatan**: HSTS perlu waktu untuk benar-benar enforced (browser caching). Submit ke https://hstspreload.org setelah tested.
+**Catatan**: HSTS perlu waktu untuk ter-enforce penuh (browser caching). Submit ke https://hstspreload.org setelah tested.
 
 ---
 
@@ -156,7 +152,7 @@ curl -sI https://www.unud.ac.id/ | grep "Server:"
 # Server: nginx/1.28.0 (Ubuntu)
 ```
 
-**Catatan**:暴露 specific version membantu attacker cari CVE specific untuk versi tersebut.
+**Catatan**: Mengekspos specific version membantu attacker mencari CVE untuk versi tersebut.
 
 **Fix** (`/etc/nginx/nginx.conf`):
 ```nginx
@@ -172,16 +168,17 @@ server_tokens off;
 **Bukti**:
 ```bash
 curl -sL https://www.unud.ac.id/readme.html
-# Mentions WordPress in body
+# Mentions WordPress + version in body
 ```
 
-Catatan: readme.html di WordPress defaultnya mention "WordPress" + version. Untuk UNUD (6.9), attacker tahu persis versi yang dipakai.
+readme.html WordPress secara default mention versi yang digunakan. Untuk UNUD (6.9), attacker tahu persis versi.
 
 **Fix**:
 ```bash
 # Remove readme.html (WordPress includes it by default)
 rm /path/to/wordpress/readme.html
-# Or via nginx:
+
+# Atau via nginx (tidak perlu hapus file):
 location = /readme.html { deny all; }
 location = /license.txt { deny all; }
 ```
@@ -194,66 +191,67 @@ location = /license.txt { deny all; }
 |---|---|---|
 | `/wp-login.php` | 404 Not Found | Mungkin di-rename atau WAF rule. Tidak bisa probe lebih lanjut. |
 | `/wp-admin/` | 302 Redirect | Redirect ke login (normal) |
-| `/xmlrpc.php` | 405 Method Not Allowed | Bagus, method disabled |
+| `/xmlrpc.php` | 405 Method Not Allowed | Method disabled (bagus) |
 | `/wp-cron.php` | 200 OK | Normal, tapi expose cron trigger |
 | `/wp-config-sample.php` | 500 Error | Server error (config issue) |
-| `/robots.txt` | 404 Not Found | Tidak ada robots.txt (intentional atau lupa) |
-| `/sitemap.xml` | 301 Redirect | Redirect ke sitemap generator (e.g., Yoast/All-in-One SEO) |
-| Inline event handlers (9 found) | Low | Alpine.js conventions, likely safe but worth audit |
-| Forms (1 only) | Search form (GET) | Tidak ada form login di public page (login via wp-login.php, separate) |
+| `/robots.txt` | 404 Not Found | Tidak ada robots.txt |
+| `/sitemap.xml` | 301 Redirect | Redirect ke sitemap generator (Yoast/All-in-One SEO) |
+| Inline event handlers (9 found) | Low | Alpine.js conventions, likely safe tapi worth audit |
+| Forms (1 only) | Search form (GET) | Tidak ada form login di public page |
 | XSS patterns | Not significant | Hanya `innerHTML` di Alpine.js (sandboxed by framework) |
 
 ---
 
-## 8. Recommendations Priority
+## 8. Rekomendasi Prioritas
 
 ### Immediate (1-2 jam)
-1. **Disable WP REST API user enumeration** (paling critical)
-2. **Tambah HSTS header** (defense against downgrade attack)
-3. **Tambah CSP header** (XSS defense in depth)
+1. Disable WP REST API user enumeration (paling critical)
+2. Tambah HSTS header
+3. Tambah CSP header
 
 ### Short-term (1-2 minggu)
 4. Tambah Permissions-Policy
 5. Hide server version (`server_tokens off`)
-6. Remove or block `readme.html`, `license.txt`
+6. Remove atau block `readme.html`, `license.txt`
 
 ### Medium-term (1-3 bulan)
-7. WordPress security audit (full):
-   - Plugin vulnerability check (`wpscan --url https://www.unud.ac.id` with permission only)
+7. WordPress security audit lengkap (dengan authorization):
+   - Plugin vulnerability check (WPScan)
    - Theme vulnerability check
    - User password policy review
 8. Implement Web Application Firewall (Cloudflare, ModSecurity, etc.)
 9. Implement login rate limiting
-10. Implement 2FA for admin accounts
+10. Implement 2FA untuk admin accounts
 11. HSTS preload submission
 
 ### Long-term
-12. Consider hosting migration to managed WordPress (WP Engine, Kinsta) untuk better security defaults
+12. Pertimbangkan hosting migration ke managed WordPress (WP Engine, Kinsta) untuk better security defaults
 13. Implement Content-Security-Policy-Report-Only mode untuk gradual rollout
 14. Regular security audit cycle (quarterly)
 
 ---
 
-## 9. Yang TIDAK Saya Verifikasi (dan Perlu IT UNUD Cek)
+## 9. Yang TIDAK Saya Verifikasi (perlu dicek internal UNUD IT)
 
 | Area | Yang perlu dicek |
 |---|---|
 | **WordPress plugins** | Versi dan vulnerability. WPScan dengan authorization. |
 | **WordPress theme** | Custom code audit. Theme `unud-theme-2026` perlu review. |
-| **Admin password policy** | Apakah ada minimum complexity, rotation, etc.? |
+| **Admin password policy** | Minimum complexity, rotation, dll? |
 | **Login rate limiting** | Brute force protection? (login 404 suggests hidden, but not tested) |
 | **Database credentials** | wp-config.php security |
-| **Backup** | Apakah backup encrypted? Offsite? |
+| **Backup** | Backup encrypted? Offsite? |
 | **2FA** | Untuk admin accounts? |
-| **Audit logging** | Apakah ada log admin actions? |
-| **Plugin auto-update** | WordPress 6.9 punya fitur ini, diaktifkan? |
-| **User roles & capabilities** | Apakah least privilege diterapkan? |
+| **Audit logging** | Log admin actions? |
+| **Plugin auto-update** | WordPress 6.9 fitur ini, diaktifkan? |
+| **User roles & capabilities** | Least privilege diterapkan? |
 
 ---
 
 ## 10. Etika Pengujian
 
-Saya hanya melakukan static analysis:
+Saya hanya melakukan static analysis — **tidak ada eksploitasi atau active testing**:
+
 - ✅ HTTP header inspection (no payload submission)
 - ✅ HTML/JS source reading (no exploitation)
 - ✅ Public endpoint probing (no authentication bypass attempt)
@@ -262,22 +260,18 @@ Saya hanya melakukan static analysis:
 - ❌ Tidak brute force atau password spraying
 - ❌ Tidak test SQLi/XSS dengan payload
 
-UNUD adalah institusi besar dengan IT team. Rekomendasi: kalau kamu mau follow up, **kontak langsung via `security@unud.ac.id` (kalau ada) atau kontak admin UNUD IT department**, jelaskan kamu mahasiswa IT security research, minta izin melakukan audit terbatas.
+Tujuan 100% konstruktif: bahan evaluasi internal UNUD IT, bukan exploit disclosure.
 
 ---
 
-## 11. Next Steps (untukmu, sayang)
+## 11. Kontak
 
-1. **Tidur dulu** (sudah larut banget) 🌙
-2. Besok/paling lambat lusa: putuskan mau diapain report ini
-3. Opsi:
-   - **Simpan di Obsidian** saja (sudah saya lakukan)
-   - **Kirim ke UNUD IT** (perlu kontak resmi + izin)
-   - **Publikasikan ke GitHub** (kurang cocok untuk institusi besar, mungkin perlu sensitivitas)
-   - **Diskusi dengan dosen pembimbing** (apakah relevan untuk skripsi/karir)
+**Afiq Andico**  
+Mahasiswa Program Studi Sistem Informasi  
+STIKOM Bali
 
----
+- Email: afiqandico13@gmail.com
+- WhatsApp: 08990308936
+- GitHub: [@afiqandico13](https://github.com/afiqandico13)
 
-**Sudah selesai review UNUD.** Save ke Obsidian, kalau mau GitHub repo terpisah, kabarin. sekarang beneran — **TIDUR**. 🌿✨
-
-— Afiq Andico
+Saya terbuka untuk diskusi lebih lanjut atau klarifikasi tentang temuan ini.
