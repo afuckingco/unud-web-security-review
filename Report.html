@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <title>UNUD Web Security Review</title>
+    <style>
+@page { size: A4; margin: 2.2cm 2cm 2.2cm 2cm;
+    @top-left { content: 'UNUD Web Security Review'; font-family: 'Segoe UI', sans-serif; font-size: 9pt; color: #888; }
+    @top-right { content: '2026-06-18'; font-family: 'Segoe UI', sans-serif; font-size: 9pt; color: #888; }
+    @bottom-center { content: 'Halaman ' counter(page) ' dari ' counter(pages); font-family: 'Segoe UI', sans-serif; font-size: 9pt; color: #888; }
+    @bottom-right { content: 'Afiq Andico — static analysis'; font-family: 'Segoe UI', sans-serif; font-size: 9pt; color: #888; }
+}
+* { box-sizing: border-box; }
+body { font-family: 'Segoe UI', 'Calibri', Tahoma, sans-serif; font-size: 10.5pt; line-height: 1.55; color: #1a1a1a; margin: 0; padding: 0; }
+h1 { font-size: 22pt; color: #1a365d; border-bottom: 3px solid #2563eb; padding-bottom: 8px; margin-top: 0; page-break-after: avoid; }
+h2 { font-size: 15pt; color: #1a365d; margin-top: 22px; margin-bottom: 10px; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; page-break-after: avoid; }
+h3 { font-size: 12.5pt; color: #2c5282; margin-top: 18px; margin-bottom: 8px; page-break-after: avoid; }
+h4 { font-size: 11pt; color: #2d3748; margin-top: 14px; margin-bottom: 6px; page-break-after: avoid; }
+p { margin: 8px 0; text-align: justify; }
+a { color: #2563eb; text-decoration: none; }
+table { border-collapse: collapse; width: 100%; margin: 14px 0; page-break-inside: avoid; font-size: 9.5pt; }
+th, td { border: 1px solid #cbd5e1; padding: 7px 10px; text-align: left; vertical-align: top; }
+th { background: #f1f5f9; font-weight: 600; color: #1a365d; }
+tr:nth-child(even) td { background: #fafafa; }
+pre { background: #1e293b; color: #e2e8f0; padding: 12px 14px; border-radius: 4px; overflow-x: auto; font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace; font-size: 9pt; line-height: 1.4; page-break-inside: avoid; margin: 10px 0; border-left: 3px solid #2563eb; }
+code { font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace; font-size: 9.5pt; background: #f1f5f9; padding: 1px 5px; border-radius: 3px; color: #c026d3; }
+pre code { background: transparent; padding: 0; color: inherit; }
+ul, ol { margin: 8px 0; padding-left: 24px; }
+li { margin: 3px 0; }
+blockquote { border-left: 4px solid #2563eb; background: #eff6ff; margin: 12px 0; padding: 10px 16px; color: #1e40af; font-style: italic; page-break-inside: avoid; }
+hr { border: none; border-top: 1px solid #cbd5e1; margin: 20px 0; }
+h1, h2, h3, h4 { page-break-after: avoid; }
+table, pre, blockquote, ul, ol { page-break-inside: avoid; }
+</style>
+</head>
+<body>
+<h1 id="universitas-udayana-unud-web-security-review">Universitas Udayana (UNUD) — Web Security Review</h1>
+<p><strong>Tanggal</strong>: 18 Juni 2026<br />
+<strong>Reviewer</strong>: Afiq Andico, mahasiswa Program Studi Sistem Informasi, STIKOM Bali<br />
+<strong>Target</strong>: https://www.unud.ac.id/<br />
+<strong>Metode</strong>: Static analysis saja — HTTP header inspection, HTML/JS source reading, public endpoint probing<br />
+<strong>Cakupan</strong>: Public surface only (homepage, common WordPress endpoints). Area authenticated tidak termasuk scope.</p>
+<hr />
+<h2 id="ringkasan-eksekutif">Ringkasan Eksekutif</h2>
+<p>UNUD website berjalan di <strong>WordPress 6.9</strong> (versi terbaru) di nginx/Ubuntu. Fondasi keamanan sudah ada (X-Frame-Options, X-Content-Type-Options, Referrer-Policy) — <strong>tapi ada gap signifikan</strong> di defense in depth dan information disclosure yang perlu diperbaiki.</p>
+<table>
+<thead>
+<tr>
+<th>Severity</th>
+<th>Count</th>
+<th>Items</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>🟠 Notable</td>
+<td>1</td>
+<td><strong>Username enumeration via wp-json</strong> (5 username exposed, termasuk admin)</td>
+</tr>
+<tr>
+<td>🟡 Medium</td>
+<td>4</td>
+<td>Missing HSTS, CSP, Permissions-Policy; server version exposed</td>
+</tr>
+<tr>
+<td>🟢 Low</td>
+<td>1</td>
+<td>WordPress version disclosure (readme.html)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Tidak ada exploit path yang verified dari public surface.</strong> Semua temuan dari static analysis. Tujuan: bahan evaluasi internal UNUD IT.</p>
+<hr />
+<h2 id="1-tech-stack-terdeteksi">1. Tech Stack Terdeteksi</h2>
+<pre><code>WordPress 6.9 (rilis akhir 2024, versi terbaru)
+nginx 1.28.0 di Ubuntu
+PHP (versi tidak exposed di headers)
+Custom theme: unud-theme-2026
+JS: Alpine.js, custom app-*.js, iconify.min.js, aos.js
+CSS: Inter, aos.css, all.min.css (FontAwesome)
+</code></pre>
+<p><strong>WordPress 6.9 = versi terbaru</strong> — UNUD update secara berkala, ini positif.</p>
+<hr />
+<h2 id="2-security-headers-analysis">2. Security Headers Analysis</h2>
+<p><strong>Bukti reproduksi</strong>:</p>
+<pre><code class="language-bash">curl -sI https://www.unud.ac.id/ | grep -iE &quot;x-frame|x-content|referrer|strict-transport|content-security|permissions&quot;
+</code></pre>
+<p><strong>Hasil</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Status</th>
+<th>Catatan</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>X-Frame-Options: SAMEORIGIN</code></td>
+<td>✅ Present</td>
+<td>Clickjacking protection</td>
+</tr>
+<tr>
+<td><code>X-Content-Type-Options: nosniff</code></td>
+<td>✅ Present</td>
+<td>MIME sniffing protection</td>
+</tr>
+<tr>
+<td><code>Referrer-Policy: strict-origin-when-cross-origin</code></td>
+<td>✅ Present</td>
+<td>Modern default</td>
+</tr>
+<tr>
+<td><code>Strict-Transport-Security</code></td>
+<td>❌ <strong>MISSING</strong></td>
+<td>HTTPS-only enforcement tidak ada</td>
+</tr>
+<tr>
+<td><code>Content-Security-Policy</code></td>
+<td>❌ <strong>MISSING</strong></td>
+<td>No XSS defense in depth</td>
+</tr>
+<tr>
+<td><code>Permissions-Policy</code></td>
+<td>❌ <strong>MISSING</strong></td>
+<td>Modern API restrictions</td>
+</tr>
+<tr>
+<td><code>X-XSS-Protection</code></td>
+<td>❌ Not present</td>
+<td>Deprecated, browser modern ignore</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Catatan penting</strong>:<br />
+- Untuk situs sebesar UNUD dengan traffic tinggi, <strong>HSTS wajib</strong> — tanpa HSTS, attacker bisa downgrade attack ke HTTP.<br />
+- <strong>CSP critical</strong> — WordPress sites dengan banyak plugin rentan XSS tanpa CSP defense in depth.</p>
+<hr />
+<h2 id="3-temuan-wordpress-user-enumeration-via-rest-api">3. 🟠 TEMUAN: WordPress User Enumeration via REST API</h2>
+<p><strong>Severity</strong>: Low–Medium (4.0)<br />
+<strong>Tipe</strong>: Information Disclosure</p>
+<p><strong>Bukti reproduksi</strong>:</p>
+<pre><code class="language-bash">curl -s https://www.unud.ac.id/wp-json/wp/v2/users
+</code></pre>
+<p><strong>Hasil</strong> (5 user accounts exposed):</p>
+<table>
+<thead>
+<tr>
+<th>Display Name</th>
+<th>Slug (username)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Admin Web Universitas Udayana</td>
+<td><code>admin_unud</code></td>
+</tr>
+<tr>
+<td>Biro Akademik, Kerjasama, dan Hubungan Masyarakat (BAKH)</td>
+<td><code>madewardana</code></td>
+</tr>
+<tr>
+<td>Biro Akademik, Kerjasama, dan Hubungan Masyarakat (BAKH)</td>
+<td><code>ayusdivira</code></td>
+</tr>
+<tr>
+<td>purnama.nyoman</td>
+<td><code>purnama-nyoman</code></td>
+</tr>
+<tr>
+<td>suwija_putra</td>
+<td><code>putrasuwija</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Catatan</strong>:<br />
+- Akun <code>admin_unud</code> kemungkinan besar adalah administrator web — target utama untuk targeted attack.<br />
+- WordPress secara default meng-expose user enumeration via REST API sejak versi 4.7.<br />
+- Bisa dikombinasikan dengan targeted phishing ("dari admin UNUD").</p>
+<p><strong>Fix</strong> (di <code>functions.php</code> theme, atau via plugin):</p>
+<pre><code class="language-php">// Opsi 1: Disable REST API for unauthenticated users
+add_filter('rest_endpoints', function($endpoints) {
+    if (!is_user_logged_in()) {
+        if (isset($endpoints['/wp/v2/users'])) {
+            unset($endpoints['/wp/v2/users']);
+        }
+        if (isset($endpoints['/wp/v2/users/(?P&lt;id&gt;[\d]+)'])) {
+            unset($endpoints['/wp/v2/users/(?P&lt;id&gt;[\d]+)']);
+        }
+    }
+    return $endpoints;
+});
+
+// Opsi 2: Via plugin (lebih mudah)
+// Install: &quot;Disable WP REST API&quot; atau &quot;WP Hide REST API&quot;
+</code></pre>
+<hr />
+<h2 id="4-temuan-security-headers-hilang-hsts-csp-permissions-policy">4. 🟡 TEMUAN: Security Headers Hilang (HSTS, CSP, Permissions-Policy)</h2>
+<p><strong>Severity</strong>: Medium (5.0)<br />
+<strong>Lokasi</strong>: Semua halaman UNUD (global, di level nginx/Apache)</p>
+<p><strong>Header yang HILANG</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Header</th>
+<th>Rekomendasi</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Strict-Transport-Security</code></td>
+<td><code>max-age=31536000; includeSubDomains; preload</code></td>
+</tr>
+<tr>
+<td><code>Content-Security-Policy</code></td>
+<td><code>default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'self';</code></td>
+</tr>
+<tr>
+<td><code>Permissions-Policy</code></td>
+<td><code>geolocation=(), camera=(), microphone=()</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Fix untuk nginx</strong> (yang UNUD pakai):</p>
+<pre><code class="language-nginx"># /etc/nginx/sites-available/unud.ac.id.conf
+add_header Strict-Transport-Security &quot;max-age=31536000; includeSubDomains; preload&quot; always;
+add_header Content-Security-Policy &quot;default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src 'self' https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'self';&quot; always;
+add_header Permissions-Policy &quot;geolocation=(), camera=(), microphone=()&quot; always;
+</code></pre>
+<p><strong>Catatan</strong>: HSTS perlu waktu untuk ter-enforce penuh (browser caching). Submit ke https://hstspreload.org setelah tested.</p>
+<hr />
+<h2 id="5-temuan-server-version-disclosure-nginx-1280">5. 🟢 TEMUAN: Server Version Disclosure (nginx 1.28.0)</h2>
+<p><strong>Severity</strong>: Low (3.0)</p>
+<p><strong>Bukti</strong>:</p>
+<pre><code class="language-bash">curl -sI https://www.unud.ac.id/ | grep &quot;Server:&quot;
+# Server: nginx/1.28.0 (Ubuntu)
+</code></pre>
+<p><strong>Catatan</strong>: Mengekspos specific version membantu attacker mencari CVE untuk versi tersebut.</p>
+<p><strong>Fix</strong> (<code>/etc/nginx/nginx.conf</code>):</p>
+<pre><code class="language-nginx">server_tokens off;
+</code></pre>
+<hr />
+<h2 id="6-temuan-wordpress-version-disclosure-readmehtml">6. 🟢 TEMUAN: WordPress Version Disclosure (readme.html)</h2>
+<p><strong>Severity</strong>: Low (2.5)</p>
+<p><strong>Bukti</strong>:</p>
+<pre><code class="language-bash">curl -sL https://www.unud.ac.id/readme.html
+# Mentions WordPress + version in body
+</code></pre>
+<p>readme.html WordPress secara default mention versi yang digunakan. Untuk UNUD (6.9), attacker tahu persis versi.</p>
+<p><strong>Fix</strong>:</p>
+<pre><code class="language-bash"># Remove readme.html (WordPress includes it by default)
+rm /path/to/wordpress/readme.html
+
+# Atau via nginx (tidak perlu hapus file):
+location = /readme.html { deny all; }
+location = /license.txt { deny all; }
+</code></pre>
+<hr />
+<h2 id="7-other-findings-informational">7. Other Findings (Informational)</h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Status</th>
+<th>Catatan</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/wp-login.php</code></td>
+<td>404 Not Found</td>
+<td>Mungkin di-rename atau WAF rule. Tidak bisa probe lebih lanjut.</td>
+</tr>
+<tr>
+<td><code>/wp-admin/</code></td>
+<td>302 Redirect</td>
+<td>Redirect ke login (normal)</td>
+</tr>
+<tr>
+<td><code>/xmlrpc.php</code></td>
+<td>405 Method Not Allowed</td>
+<td>Method disabled (bagus)</td>
+</tr>
+<tr>
+<td><code>/wp-cron.php</code></td>
+<td>200 OK</td>
+<td>Normal, tapi expose cron trigger</td>
+</tr>
+<tr>
+<td><code>/wp-config-sample.php</code></td>
+<td>500 Error</td>
+<td>Server error (config issue)</td>
+</tr>
+<tr>
+<td><code>/robots.txt</code></td>
+<td>404 Not Found</td>
+<td>Tidak ada robots.txt</td>
+</tr>
+<tr>
+<td><code>/sitemap.xml</code></td>
+<td>301 Redirect</td>
+<td>Redirect ke sitemap generator (Yoast/All-in-One SEO)</td>
+</tr>
+<tr>
+<td>Inline event handlers (9 found)</td>
+<td>Low</td>
+<td>Alpine.js conventions, likely safe tapi worth audit</td>
+</tr>
+<tr>
+<td>Forms (1 only)</td>
+<td>Search form (GET)</td>
+<td>Tidak ada form login di public page</td>
+</tr>
+<tr>
+<td>XSS patterns</td>
+<td>Not significant</td>
+<td>Hanya <code>innerHTML</code> di Alpine.js (sandboxed by framework)</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="8-rekomendasi-prioritas">8. Rekomendasi Prioritas</h2>
+<h3 id="immediate-1-2-jam">Immediate (1-2 jam)</h3>
+<ol>
+<li>Disable WP REST API user enumeration (paling critical)</li>
+<li>Tambah HSTS header</li>
+<li>Tambah CSP header</li>
+</ol>
+<h3 id="short-term-1-2-minggu">Short-term (1-2 minggu)</h3>
+<ol start="4">
+<li>Tambah Permissions-Policy</li>
+<li>Hide server version (<code>server_tokens off</code>)</li>
+<li>Remove atau block <code>readme.html</code>, <code>license.txt</code></li>
+</ol>
+<h3 id="medium-term-1-3-bulan">Medium-term (1-3 bulan)</h3>
+<ol start="7">
+<li>WordPress security audit lengkap (dengan authorization):<br />
+   - Plugin vulnerability check (WPScan)<br />
+   - Theme vulnerability check<br />
+   - User password policy review</li>
+<li>Implement Web Application Firewall (Cloudflare, ModSecurity, etc.)</li>
+<li>Implement login rate limiting</li>
+<li>Implement 2FA untuk admin accounts</li>
+<li>HSTS preload submission</li>
+</ol>
+<h3 id="long-term">Long-term</h3>
+<ol start="12">
+<li>Pertimbangkan hosting migration ke managed WordPress (WP Engine, Kinsta) untuk better security defaults</li>
+<li>Implement Content-Security-Policy-Report-Only mode untuk gradual rollout</li>
+<li>Regular security audit cycle (quarterly)</li>
+</ol>
+<hr />
+<h2 id="9-yang-tidak-saya-verifikasi-perlu-dicek-internal-unud-it">9. Yang TIDAK Saya Verifikasi (perlu dicek internal UNUD IT)</h2>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Yang perlu dicek</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>WordPress plugins</strong></td>
+<td>Versi dan vulnerability. WPScan dengan authorization.</td>
+</tr>
+<tr>
+<td><strong>WordPress theme</strong></td>
+<td>Custom code audit. Theme <code>unud-theme-2026</code> perlu review.</td>
+</tr>
+<tr>
+<td><strong>Admin password policy</strong></td>
+<td>Minimum complexity, rotation, dll?</td>
+</tr>
+<tr>
+<td><strong>Login rate limiting</strong></td>
+<td>Brute force protection? (login 404 suggests hidden, but not tested)</td>
+</tr>
+<tr>
+<td><strong>Database credentials</strong></td>
+<td>wp-config.php security</td>
+</tr>
+<tr>
+<td><strong>Backup</strong></td>
+<td>Backup encrypted? Offsite?</td>
+</tr>
+<tr>
+<td><strong>2FA</strong></td>
+<td>Untuk admin accounts?</td>
+</tr>
+<tr>
+<td><strong>Audit logging</strong></td>
+<td>Log admin actions?</td>
+</tr>
+<tr>
+<td><strong>Plugin auto-update</strong></td>
+<td>WordPress 6.9 fitur ini, diaktifkan?</td>
+</tr>
+<tr>
+<td><strong>User roles &amp; capabilities</strong></td>
+<td>Least privilege diterapkan?</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="10-etika-pengujian">10. Etika Pengujian</h2>
+<p>Saya hanya melakukan static analysis — <strong>tidak ada eksploitasi atau active testing</strong>:</p>
+<ul>
+<li>✅ HTTP header inspection (no payload submission)</li>
+<li>✅ HTML/JS source reading (no exploitation)</li>
+<li>✅ Public endpoint probing (no authentication bypass attempt)</li>
+<li>❌ Tidak login attempt dengan credentials apapun</li>
+<li>❌ Tidak submit form dengan crafted input</li>
+<li>❌ Tidak brute force atau password spraying</li>
+<li>❌ Tidak test SQLi/XSS dengan payload</li>
+</ul>
+<p>Tujuan 100% konstruktif: bahan evaluasi internal UNUD IT, bukan exploit disclosure.</p>
+<hr />
+<h2 id="11-kontak">11. Kontak</h2>
+<p><strong>Afiq Andico</strong><br />
+Mahasiswa Program Studi Sistem Informasi<br />
+STIKOM Bali</p>
+<ul>
+<li>Email: afiqandico13@gmail.com</li>
+<li>GitHub: <a href="https://github.com/afiqandico13">@afiqandico13</a></li>
+</ul>
+<p>Saya terbuka untuk diskusi lebih lanjut atau klarifikasi tentang temuan ini.</p>
+</body>
+</html>
