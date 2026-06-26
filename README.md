@@ -1,3 +1,5 @@
+![GitHub top language](https://img.shields.io/github/languages/top/afiqandico13/unud-web-security-review) ![GitHub license](https://img.shields.io/github/license/afiqandico13/unud-web-security-review)
+
 # Universitas Udayana (UNUD) — Web Security Review
 
 > ⚠️ **Status: PRIVATE repository (default for safety).** See [Responsible Disclosure](#responsible-disclosure) below.
