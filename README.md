@@ -109,7 +109,7 @@ Sibling security research repos dari author yang sama:
 
 ## 📊 Author Portfolio
 
-**Afiq Andico Pangimpian** — IT Support @ Cube Cafe Jimbaran · S1 Sistem Informasi ITB STIKOM Bali
+**afuckingco**
 
 - Email: afiqandico13@gmail.com
 - GitHub: [@afiqandico13](https://github.com/afiqandico13)
